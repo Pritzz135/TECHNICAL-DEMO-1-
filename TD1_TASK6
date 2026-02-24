@@ -88,7 +88,7 @@ void driveStraight() {
 
         // Signs flipped vs before — higher duty now means faster
         float dutyL = clamp(BASE_DUTY - correction, 0.60f, 0.75f);
-        float dutyR = clamp(BASE_DUTY + correction, 0.60f, 0.75f);
+        float dutyR = clamp((BASE_DUTY - 0.03) + correction, 0.60f, 0.75f);
 
         PWM1.write(dutyL);
         PWM2.write(dutyR);
