@@ -1,0 +1,81 @@
+#include "mbed.h"
+#include "C12832.h"
+
+// ======================================================
+//                          LCD
+// ======================================================
+C12832 lcd(D11, D13, D12, D7, D10);
+
+// ======================================================
+//                    ENCODER INPUTS
+// ======================================================
+InterruptIn encLA(PA_10);
+InterruptIn encLB(PB_3);
+
+InterruptIn encRA(PB_9);
+InterruptIn encRB(PB_8);
+
+// ======================================================
+//                     GLOBAL COUNTERS
+// ======================================================
+volatile int pulsesL = 0;
+volatile int pulsesR = 0;
+
+// Cumulative pulse counters (never reset)
+long totalPulsesL = 0;
+long totalPulsesR = 0;
+
+const int PPR = 512;
+
+Timer timer;
+
+// ======================================================
+//              QUADRATURE DECODING (SOFTWARE)
+// ======================================================
+void leftA_rise()  { if (encLB.read()) pulsesL--; else pulsesL++; }
+void leftB_rise()  { if (encLA.read()) pulsesL++; else pulsesL--; }
+void rightA_rise() { if (encRB.read()) pulsesR--; else pulsesR++; }
+void rightB_rise() { if (encRA.read()) pulsesR++; else pulsesR--; }
+
+// ======================================================
+//                          MAIN
+// ======================================================
+int main()
+{
+    encLA.rise(&leftA_rise);
+    encLB.rise(&leftB_rise);
+    encRA.rise(&rightA_rise);
+    encRB.rise(&rightB_rise);
+
+    timer.start();
+
+    while (true)
+    {
+        if (timer.read_ms() >= 1000)
+        {
+            __disable_irq();
+            int pL = pulsesL;
+            int pR = pulsesR;
+            pulsesL = 0;
+            pulsesR = 0;
+            __enable_irq();
+
+            // Accumulate into totals (use abs so reverse doesn't subtract)
+            totalPulsesL += abs(pL);
+            totalPulsesR += abs(pR);
+
+            float rpmL = fabs(((float)pL / PPR) * 60.0f);
+            float rpmR = fabs(((float)pR / PPR) * 60.0f);
+
+            lcd.cls();
+
+            lcd.locate(0, 0);
+            lcd.printf("Left: RPM:%.1f Pulse:%ld", rpmL, totalPulsesL);
+
+            lcd.locate(0, 16);
+            lcd.printf("Right: RPM:%.1f Pulse:%ld", rpmR, totalPulsesR);
+
+            timer.reset();
+        }
+    }
+}
