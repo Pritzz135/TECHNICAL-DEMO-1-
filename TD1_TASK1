@@ -8,6 +8,7 @@ private:
 public:
     Potentiometer(PinName pin, float v) : inputSignal(pin), VDD(v),
         currentSampleNorm(0.0f), currentSampleVolts(0.0f) {}
+
     void sample(void) {
         currentSampleNorm  = inputSignal.read();
         currentSampleVolts = currentSampleNorm * VDD;
@@ -29,32 +30,65 @@ public:
     }
 };
 
-PwmOut PWM1(PC_8);
-PwmOut PWM2(PC_6);
+// Motor 1 (Left)
+DigitalOut  BIP1(PC_5);
+DigitalOut  DIR1(PB_14);  
+PwmOut      PWM1(PC_8);   
 
-C12832 lcd(D11, D13, D12, D7, D10);
+// Motor 2 (Right)
+DigitalOut  BIP2(PB_15); 
+DigitalOut  DIR2(PB_12); 
+PwmOut      PWM2(PC_6);  
+
+// Common & Shield
+DigitalOut  ENA(PB_2);       
+DigitalOut  heartbeat(LED1); 
+C12832      lcd(D11, D13, D12, D7, D10);
+
+// Encoders (CN7 Pins)
+InterruptIn encLA(PA_10); 
+InterruptIn encLB(PB_3); 
+InterruptIn encRA(PB_9); 
+InterruptIn encRB(PB_8);  
 
 int main(void) {
-    PWM1.period_us(50);
+    // 1. Initialize PWM Period
+    PWM1.period_us(50); // 20kHz
     PWM2.period_us(50);
 
+    // 2. Initialize Potentiometers
     SamplingPotentiometer potLeft(PA_0, 3.3f, 100);
     SamplingPotentiometer potRight(PA_1, 3.3f, 100);
 
+    // 3. Enable Bipolar Operation
+    ENA = 0;   
+    BIP1 = 1;  // Set to 1 to enable Bipolar PWM mode
+    BIP2 = 1;  
+    
+    // In many bipolar configurations, DIR acts as a phase or enable for the H-bridge legs
+    DIR1 = 1;  
+    DIR2 = 1;
+
     lcd.cls();
-    lcd.locate(0, 0);
-    lcd.printf("PWM Scope Test");
+    lcd.locate(0,0);
+    lcd.printf("Bipolar Mode Active");
 
     while(true) {
+        // 4. Read Potentiometer Values (0.0 to 1.0)
         float dutyL = potLeft.getCurrentSampleNorm();
         float dutyR = potRight.getCurrentSampleNorm();
 
+        // 5. Apply to PWM Outputs
+        // In Bipolar mode, the duty cycle controls the average voltage:
+        // 0.5 (50%) is usually "Stop", 1.0 is "Full Forward", 0.0 is "Full Reverse"
         PWM1.write(dutyL);
         PWM2.write(dutyR);
 
-        lcd.locate(0, 12);
-        lcd.printf("L: %3.0f%%  R: %3.0f%%", dutyL*100, dutyR*100);
-
-        wait(0.1f);
+        // 6. Update Telemetry
+        lcd.locate(0,12);
+        lcd.printf("L-PWM: %3.0f%%  R-PWM: %3.0f%%", dutyL*100, dutyR*100);
+        
+        heartbeat = !heartbeat;
+        wait(0.1); 
     }
 }
