@@ -1,0 +1,60 @@
+#include "mbed.h"
+#include "C12832.h"
+
+class Potentiometer {
+private:
+    AnalogIn inputSignal;
+    float VDD, currentSampleNorm, currentSampleVolts;
+public:
+    Potentiometer(PinName pin, float v) : inputSignal(pin), VDD(v),
+        currentSampleNorm(0.0f), currentSampleVolts(0.0f) {}
+    void sample(void) {
+        currentSampleNorm  = inputSignal.read();
+        currentSampleVolts = currentSampleNorm * VDD;
+    }
+    const float getCurrentSampleNorm(void)  { return currentSampleNorm; }
+    const float getCurrentSampleVolts(void) { return currentSampleVolts; }
+};
+
+class SamplingPotentiometer : public Potentiometer {
+private:
+    float samplingFrequency, samplingPeriod;
+    Ticker sampler;
+public:
+    SamplingPotentiometer(PinName p, float v, float fs)
+        : Potentiometer(p, v) {
+        samplingFrequency = fs;
+        samplingPeriod    = 1.0f / fs;
+        sampler.attach(callback(this, &Potentiometer::sample), samplingPeriod);
+    }
+};
+
+PwmOut PWM1(PC_8);
+PwmOut PWM2(PC_6);
+
+C12832 lcd(D11, D13, D12, D7, D10);
+
+int main(void) {
+    PWM1.period_us(50);
+    PWM2.period_us(50);
+
+    SamplingPotentiometer potLeft(PA_0, 3.3f, 100);
+    SamplingPotentiometer potRight(PA_1, 3.3f, 100);
+
+    lcd.cls();
+    lcd.locate(0, 0);
+    lcd.printf("PWM Scope Test");
+
+    while(true) {
+        float dutyL = potLeft.getCurrentSampleNorm();
+        float dutyR = potRight.getCurrentSampleNorm();
+
+        PWM1.write(dutyL);
+        PWM2.write(dutyR);
+
+        lcd.locate(0, 12);
+        lcd.printf("L: %3.0f%%  R: %3.0f%%", dutyL*100, dutyR*100);
+
+        wait(0.1f);
+    }
+}
