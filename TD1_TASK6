@@ -1,0 +1,210 @@
+#include "mbed.h"
+
+// ======================================================
+//  USER CONSTANTS
+// ======================================================
+const float WHEEL_CIRCUMFERENCE_M = 0.2450f;
+const float TRACK_WIDTH_M         = 0.136f;  // Right Turn Calibration
+const float TARGET_DISTANCE_M     = 0.5120f;   // Straight Distance Calibration
+const float BASE_DUTY             = 0.65f;   // >0.5 = forward
+const float TURN_DUTY             = 0.65f;
+const float KP                    = 0.0081f;
+const float KD                    = 0.0034f;
+
+// =====================================================
+//  DERIVED
+// ======================================================
+const int  PPR           = 512;
+const long TARGET_PULSES = (long)((TARGET_DISTANCE_M / WHEEL_CIRCUMFERENCE_M) * PPR);
+const long TURN_PULSES   = (long)(((TRACK_WIDTH_M / 2.0f) * (3.14159f / 2.0f) / WHEEL_CIRCUMFERENCE_M) * PPR);
+
+// ======================================================
+//  MOTORS
+// ======================================================
+DigitalOut BIP1(PC_5);
+DigitalOut DIR1(PB_14);
+PwmOut     PWM1(PC_8);
+
+DigitalOut BIP2(PB_15);
+DigitalOut DIR2(PB_12);
+PwmOut     PWM2(PC_6);
+
+DigitalOut ENA(PB_2);
+
+// ======================================================
+//  ENCODERS
+// ======================================================
+InterruptIn encLA(PA_10);
+InterruptIn encLB(PB_3);
+InterruptIn encRA(PB_9);
+InterruptIn encRB(PB_8);
+
+volatile long pulsesL = 0;
+volatile long pulsesR = 0;
+
+void leftA_rise()  { if (encLB.read()) pulsesL++; else pulsesL--; }
+void leftB_rise()  { if (encLA.read()) pulsesL--; else pulsesL++; }
+void rightA_rise() { if (encRB.read()) pulsesR--; else pulsesR++; }
+void rightB_rise() { if (encRA.read()) pulsesR++; else pulsesR--; }
+
+// ======================================================
+//  HELPERS
+// ======================================================
+inline float clamp(float v, float lo, float hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+void stopMotors() {
+    PWM1.write(0.5f);
+    PWM2.write(0.5f);
+}
+
+void resetPulses() {
+    __disable_irq();
+    pulsesL = 0;
+    pulsesR = 0;
+    __enable_irq();
+}
+
+void driveStraight() {
+    resetPulses();
+    long last_error = 0;
+
+    while (true)
+    {
+        long avgPulses = (pulsesL + pulsesR) / 2;
+
+        if (avgPulses >= TARGET_PULSES) {
+            break;
+        }
+
+        long  error      = pulsesL - pulsesR;
+        long  d_error    = error - last_error;
+        last_error       = error;
+
+        float correction = (KP * (float)error) + (KD * (float)d_error);
+
+        // Signs flipped vs before — higher duty now means faster
+        float dutyL = clamp(BASE_DUTY - correction, 0.55f, 0.70f);
+        float dutyR = clamp(BASE_DUTY + correction, 0.55f, 0.70f);
+
+        PWM1.write(dutyL);
+        PWM2.write(dutyR);
+
+        wait(0.05f);
+    }
+
+    stopMotors();
+    wait(0.5f);
+}
+
+void turnRight() {
+    resetPulses();
+
+    while (true)
+    {
+        long avgTurn = (abs(pulsesL) + abs(pulsesR)) / 2;
+
+        if (avgTurn >= TURN_PULSES) {
+            break;
+        }
+
+        PWM1.write(TURN_DUTY);           // left forward
+        PWM2.write(1.0f - TURN_DUTY);   // right backward
+
+        wait(0.05f);
+    }
+
+    stopMotors();
+    wait(0.5f);
+}
+
+void turnLeft() {
+    resetPulses();
+    long leftTurnPulses = (long)(TURN_PULSES * 1.15f);  // Left Turn Calibration Point
+
+    while (true)
+    {
+        long avgTurn = (abs(pulsesL) + abs(pulsesR)) / 2;
+
+        if (avgTurn >= leftTurnPulses) {
+            break;
+        }
+
+        PWM1.write(1.0f - TURN_DUTY);   // left backward
+        PWM2.write(TURN_DUTY);           // right forward
+
+        wait(0.05f);
+    }
+
+    stopMotors();
+    wait(0.5f);
+}
+
+void turn180() {
+    resetPulses();
+
+    while (true)
+    {
+        long avgTurn = (abs(pulsesL) + abs(pulsesR)) / 2;
+
+        if (avgTurn >= (long)(TURN_PULSES * 2.25f))  // 180 Degree Turn Calibration Point
+        {
+            break;
+        }
+
+        PWM1.write(TURN_DUTY);           // left forward
+        PWM2.write(1.0f - TURN_DUTY);   // right backward
+
+        wait(0.05f);
+    }
+
+    stopMotors();
+    wait(0.5f);
+}
+
+// ======================================================
+//  MAIN
+// ======================================================
+int main()
+{
+    encLA.rise(&leftA_rise);
+    encLB.rise(&leftB_rise);
+    encRA.rise(&rightA_rise);
+    encRB.rise(&rightB_rise);
+
+    PWM1.period_us(50);
+    PWM2.period_us(50);
+    stopMotors();
+
+    BIP1 = 1;  BIP2 = 1;
+    DIR1 = 1;  DIR2 = 1;
+
+    ENA = 0;
+    wait(0.5f);
+    ENA = 1;
+
+    // Square path going right
+    for (int i = 0; i < 4; i++)
+    {
+        driveStraight();
+        if (i < 3) turnRight();
+    }
+
+    // 180 degree turn
+    turn180();
+
+    // Square path going left back
+    for (int i = 0; i < 4; i++)
+    {
+        driveStraight();
+        if (i < 3) turnLeft();
+    }
+
+    stopMotors();
+    while (true) {}
+} 
+
+task 6 final code
