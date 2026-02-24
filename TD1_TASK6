@@ -5,11 +5,11 @@
 // ======================================================
 const float WHEEL_CIRCUMFERENCE_M = 0.2450f;
 const float TRACK_WIDTH_M         = 0.136f;  // Right Turn Calibration
-const float TARGET_DISTANCE_M     = 0.5120f;   // Straight Distance Calibration
-const float BASE_DUTY             = 0.65f;   // >0.5 = forward
+const float TARGET_DISTANCE_M     = 0.495f;   // Straight Distance Calibration
+const float BASE_DUTY             = 0.72f;   // >0.5 = forward
 const float TURN_DUTY             = 0.65f;
-const float KP                    = 0.0081f;
-const float KD                    = 0.0034f;
+const float KP                    = 0.0080f;
+const float KD                    = 0.0035f;
 
 // =====================================================
 //  DERIVED
@@ -87,8 +87,8 @@ void driveStraight() {
         float correction = (KP * (float)error) + (KD * (float)d_error);
 
         // Signs flipped vs before — higher duty now means faster
-        float dutyL = clamp(BASE_DUTY - correction, 0.55f, 0.70f);
-        float dutyR = clamp(BASE_DUTY + correction, 0.55f, 0.70f);
+        float dutyL = clamp(BASE_DUTY - correction, 0.60f, 0.75f);
+        float dutyR = clamp(BASE_DUTY + correction, 0.60f, 0.75f);
 
         PWM1.write(dutyL);
         PWM2.write(dutyR);
@@ -123,7 +123,7 @@ void turnRight() {
 
 void turnLeft() {
     resetPulses();
-    long leftTurnPulses = (long)(TURN_PULSES * 1.15f);  // Left Turn Calibration Point
+    long leftTurnPulses = (long)(TURN_PULSES * 1.219f);  // Left Turn Calibration Point
 
     while (true)
     {
@@ -150,7 +150,7 @@ void turn180() {
     {
         long avgTurn = (abs(pulsesL) + abs(pulsesR)) / 2;
 
-        if (avgTurn >= (long)(TURN_PULSES * 2.25f))  // 180 Degree Turn Calibration Point
+        if (avgTurn >= (long)(TURN_PULSES * 2.26f))  // 180 Degree Turn Calibration Point
         {
             break;
         }
@@ -206,5 +206,3 @@ int main()
     stopMotors();
     while (true) {}
 } 
-
-task 6 final code
