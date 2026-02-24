@@ -61,8 +61,8 @@ int main()
             __enable_irq();
 
             // Accumulate into totals (use abs so reverse doesn't subtract)
-            totalPulsesL += abs(pL);
-            totalPulsesR += abs(pR);
+            totalPulsesL += pL * -1;
+            totalPulsesR += pR * -1;
 
             float rpmL = fabs(((float)pL / PPR) * 60.0f);
             float rpmR = fabs(((float)pR / PPR) * 60.0f);
