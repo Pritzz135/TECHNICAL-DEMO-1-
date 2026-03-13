@@ -1,0 +1,23 @@
+#include "mbed.h"
+
+// Darlington array inputs
+DigitalOut sensGnd1(PA_0);
+DigitalOut sensGnd2(PA_1);
+DigitalOut sensGnd3(PA_4);
+DigitalOut sensGnd4(PB_0);
+DigitalOut sensGnd5(PC_1);
+
+int main()
+{
+    // Enable all Darlington channels (connect sensor grounds)
+    sensGnd1 = 1;
+    sensGnd2 = 1;
+    sensGnd3 = 1;
+    sensGnd4 = 1;
+    sensGnd5 = 1;
+
+    while (true)
+    {
+        // Do nothing, just keep them enabled
+    }
+}
