@@ -1,0 +1,107 @@
+#include "mbed.h"
+#include "C12832.h"
+
+// ======================================================
+// LCD
+// ======================================================
+C12832 lcd(D11, D13, D12, D7, D10);
+
+// ======================================================
+// ENCODER INPUTS
+// ======================================================
+InterruptIn encLA(PA_10);
+InterruptIn encLB(PB_3);
+InterruptIn encRA(PB_9);
+InterruptIn encRB(PB_8);
+
+// ======================================================
+// GLOBAL COUNTERS
+// ======================================================
+volatile int pulsesL = 0;
+volatile int pulsesR = 0;
+
+long totalPulsesL = 0;
+long totalPulsesR = 0;
+
+const int PPR = 512;
+const float WHEEL_CIRCUMFERENCE = 0.245f;   // meters
+
+Timer timer;
+
+// ======================================================
+// QUADRATURE DECODING
+// If sign is wrong, swap + and - in one wheel's handlers
+// ======================================================
+void leftA_rise()
+{
+    if (encLB.read())
+        pulsesL++;
+    else
+        pulsesL--;
+}
+
+void leftB_rise()
+{
+    if (encLA.read())
+        pulsesL--;
+    else
+        pulsesL++;
+}
+
+void rightA_rise()
+{
+    if (encRB.read())
+        pulsesR++;
+    else
+        pulsesR--;
+}
+
+void rightB_rise()
+{
+    if (encRA.read())
+        pulsesR--;
+    else
+        pulsesR++;
+}
+
+// ======================================================
+// MAIN
+// ======================================================
+int main()
+{
+    encLA.rise(&leftA_rise);
+    encLB.rise(&leftB_rise);
+    encRA.rise(&rightA_rise);
+    encRB.rise(&rightB_rise);
+
+    timer.start();
+
+    while (true)
+    {
+        if (timer.read_ms() >= 1000)
+        {
+            __disable_irq();
+            int pL = pulsesL;
+            int pR = pulsesR;
+            pulsesL = 0;
+            pulsesR = 0;
+            __enable_irq();
+
+            totalPulsesL += pL;
+            totalPulsesR += pR;
+
+            float velL = ((float)pL / PPR) * WHEEL_CIRCUMFERENCE;
+            float velR = (-1)*((float)pR / PPR) * WHEEL_CIRCUMFERENCE;
+
+            lcd.cls();
+
+            lcd.locate(0, 0);
+            lcd.printf("L:% .3f m/s", velL);
+
+            lcd.locate(0, 16);
+            lcd.printf("R:% .3f m/s", velR);
+
+            timer.reset();
+        }
+    }
+}
