@@ -10,7 +10,6 @@ const float PI             = 3.14159f;
 const float SAMPLE_TIME    = 0.1f;       // 100ms sample window
 
 // --- The defined function f(x, y, z) ---
-// This calculates the distance moved (m) per single encoder tick
 float calculate_f_factor() {
     return (WHEEL_DIAMETER * PI) / (CPR * GEAR_RATIO);
 }
@@ -43,7 +42,7 @@ DigitalOut BIP2(PB_15);
 DigitalOut DIR2(PB_12);
 PwmOut PWM2(PC_6);
 DigitalOut ENA(PB_2);
-C12832     lcd(D11, D13, D12, D7, D10);
+C12832    lcd(D11, D13, D12, D7, D10);
 
 // Encoder Interrupts
 InterruptIn encLA(PA_10); 
@@ -65,29 +64,36 @@ int main(void) {
     encRA.rise(&countR);
 
     float f_factor = calculate_f_factor();
-    ENA = 1; BIP1 = 1; BIP2 = 1; 
+    
+    // Initializing pins for Bipolar PWM
+    ENA = 1; 
+    BIP1 = 1; 
+    BIP2 = 1; 
 
     while(true) {
-        // Drive Motors
+        // --- Drive Motors ---
         float dutyL = potLeft.getCurrentSampleNorm();
         float dutyR = potRight.getCurrentSampleNorm();
         PWM1.write(dutyL);
         PWM2.write(dutyR);
 
         // --- STEP 1: Encoder Tick Rate ---
-        // (Current - Previous) / Sample Time. 
-        // Note: Since we reset currentTicks to 0 each loop, "Previous" is 0.
         float tickRateL = (float)currentTicksL / SAMPLE_TIME;
         float tickRateR = (float)currentTicksR / SAMPLE_TIME;
 
-        // --- STEP 2: Wheel Velocity ---
-        // Wheel Velocity = Tick Rate * f(diameter, gear, CPR)
-        // Correcting for direction (Bipolar: < 0.5 is reverse)
+        // --- STEP 2: Wheel Velocity (Corrected Sign Logic) ---
+        // If your "Front" movement happens when Duty < 0.5:
+        // We keep it positive when Duty < 0.5 and flip to negative when Duty > 0.5
+        
         float wheelVelL = tickRateL * f_factor;
-        if (dutyL < 0.5f) wheelVelL = -wheelVelL;
+        if (dutyL > 0.5f) {
+            wheelVelL = -wheelVelL; // Flip to negative for backward range
+        }
 
         float wheelVelR = tickRateR * f_factor;
-        if (dutyR < 0.5f) wheelVelR = -wheelVelR;
+        if (dutyR > 0.5f) {
+            wheelVelR = -wheelVelR; // Flip to negative for backward range
+        }
 
         // Reset counters for the next window
         currentTicksL = 0;
