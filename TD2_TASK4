@@ -1,0 +1,42 @@
+#include "mbed.h"
+
+// Initialize Serial communication to PC
+Serial pc(USBTX, USBRX);
+
+// Line Sensor inputs
+AnalogIn s1(PC_2);
+AnalogIn s2(PC_3);
+AnalogIn s3(PC_5);
+AnalogIn s4(PB_1);
+AnalogIn s5(PC_4);
+
+int main()
+{
+    pc.baud(9600);
+    int readingCount = 0; 
+    
+    pc.printf("\n--- Line Sensor Simultaneous Log ---\n");
+    pc.printf("Format: [Reading #] | S1 | S2 | S3 | S4 | S5\n");
+    pc.printf("------------------------------------------\n");
+
+    while (true)
+    {
+        // 1. Simultaneous Sampling
+        float v1 = s1.read();
+        float v2 = s2.read();
+        float v3 = s3.read();
+        float v4 = s4.read();
+        float v5 = s5.read();
+
+        // 2. Increment counter
+        readingCount++;
+
+        // 3. Print to a NEW line (\n) 
+        // Note: Ensure there is NO space between the \ and the n
+        pc.printf("[%04d] | %.2f | %.2f | %.2f | %.2f | %.2f\n", 
+                  readingCount, v1, v2, v3, v4, v5);
+
+        // 4. Slow update rate (500ms) for easy reading
+        wait_ms(500); 
+    }
+}
