@@ -1,107 +1,111 @@
 #include "mbed.h"
 #include "C12832.h"
 
-// ======================================================
-// LCD
-// ======================================================
-C12832 lcd(D11, D13, D12, D7, D10);
+// --- Parameters for the Velocity Function f(x, y, z) ---
+const float WHEEL_DIAMETER = 0.080f;     // x: Wheel diameter (meters)
+const float GEAR_RATIO     = 50.0f;      // y: Gear ratio
+const float CPR            = 64.0f;      // z: Counts Per Revolution
+const float DIST_BETWEEN_WHEELS = 0.15f; // Distance between wheels (meters)
+const float PI             = 3.14159f;
+const float SAMPLE_TIME    = 0.1f;       // 100ms sample window
 
-// ======================================================
-// ENCODER INPUTS
-// ======================================================
-InterruptIn encLA(PA_10);
-InterruptIn encLB(PB_3);
-InterruptIn encRA(PB_9);
-InterruptIn encRB(PB_8);
-
-// ======================================================
-// GLOBAL COUNTERS
-// ======================================================
-volatile int pulsesL = 0;
-volatile int pulsesR = 0;
-
-long totalPulsesL = 0;
-long totalPulsesR = 0;
-
-const int PPR = 512;
-const float WHEEL_CIRCUMFERENCE = 0.245f;   // meters
-
-Timer timer;
-
-// ======================================================
-// QUADRATURE DECODING
-// If sign is wrong, swap + and - in one wheel's handlers
-// ======================================================
-void leftA_rise()
-{
-    if (encLB.read())
-        pulsesL++;
-    else
-        pulsesL--;
+// --- The defined function f(x, y, z) ---
+// This calculates the distance moved (m) per single encoder tick
+float calculate_f_factor() {
+    return (WHEEL_DIAMETER * PI) / (CPR * GEAR_RATIO);
 }
 
-void leftB_rise()
-{
-    if (encLA.read())
-        pulsesL--;
-    else
-        pulsesL++;
-}
+// --- Potentiometer Classes ---
+class Potentiometer {
+protected:
+    AnalogIn inputSignal;
+    float VDD, currentSampleNorm;
+public:
+    Potentiometer(PinName pin, float v) : inputSignal(pin), VDD(v), currentSampleNorm(0.0f) {}
+    void sample(void) { currentSampleNorm = inputSignal.read(); }
+    float getCurrentSampleNorm(void) { return currentSampleNorm; }
+};
 
-void rightA_rise()
-{
-    if (encRB.read())
-        pulsesR++;
-    else
-        pulsesR--;
-}
+class SamplingPotentiometer : public Potentiometer {
+private:
+    Ticker sampler;
+public:
+    SamplingPotentiometer(PinName p, float v, float fs) : Potentiometer(p, v) {
+        sampler.attach(callback(this, &Potentiometer::sample), 1.0f / fs);
+    }
+};
 
-void rightB_rise()
-{
-    if (encRA.read())
-        pulsesR--;
-    else
-        pulsesR++;
-}
+// --- Hardware Setup ---
+DigitalOut BIP1(PB_13);
+DigitalOut DIR1(PB_14);
+PwmOut PWM1(PC_8);
+DigitalOut BIP2(PB_15);
+DigitalOut DIR2(PB_12);
+PwmOut PWM2(PC_6);
+DigitalOut ENA(PB_2);
+C12832     lcd(D11, D13, D12, D7, D10);
 
-// ======================================================
-// MAIN
-// ======================================================
-int main()
-{
-    encLA.rise(&leftA_rise);
-    encLB.rise(&leftB_rise);
-    encRA.rise(&rightA_rise);
-    encRB.rise(&rightB_rise);
+// Encoder Interrupts
+InterruptIn encLA(PA_10); 
+InterruptIn encRA(PB_9); 
 
-    timer.start();
+volatile int currentTicksL = 0;
+volatile int currentTicksR = 0;
 
-    while (true)
-    {
-        if (timer.read_ms() >= 1000)
-        {
-            __disable_irq();
-            int pL = pulsesL;
-            int pR = pulsesR;
-            pulsesL = 0;
-            pulsesR = 0;
-            __enable_irq();
+void countL() { currentTicksL++; }
+void countR() { currentTicksR++; }
 
-            totalPulsesL += pL;
-            totalPulsesR += pR;
+int main(void) {
+    PWM1.period_us(50);
+    PWM2.period_us(50);
+    SamplingPotentiometer potLeft(PA_0, 3.3f, 100);
+    SamplingPotentiometer potRight(PA_1, 3.3f, 100);
 
-            float velL = ((float)pL / PPR) * WHEEL_CIRCUMFERENCE;
-            float velR = (-1)*((float)pR / PPR) * WHEEL_CIRCUMFERENCE;
+    encLA.rise(&countL);
+    encRA.rise(&countR);
 
-            lcd.cls();
+    float f_factor = calculate_f_factor();
+    ENA = 1; BIP1 = 1; BIP2 = 1; 
 
-            lcd.locate(0, 0);
-            lcd.printf("L:% .3f m/s", velL);
+    while(true) {
+        // Drive Motors
+        float dutyL = potLeft.getCurrentSampleNorm();
+        float dutyR = potRight.getCurrentSampleNorm();
+        PWM1.write(dutyL);
+        PWM2.write(dutyR);
 
-            lcd.locate(0, 16);
-            lcd.printf("R:% .3f m/s", velR);
+        // --- STEP 1: Encoder Tick Rate ---
+        // (Current - Previous) / Sample Time. 
+        // Note: Since we reset currentTicks to 0 each loop, "Previous" is 0.
+        float tickRateL = (float)currentTicksL / SAMPLE_TIME;
+        float tickRateR = (float)currentTicksR / SAMPLE_TIME;
 
-            timer.reset();
-        }
+        // --- STEP 2: Wheel Velocity ---
+        // Wheel Velocity = Tick Rate * f(diameter, gear, CPR)
+        // Correcting for direction (Bipolar: < 0.5 is reverse)
+        float wheelVelL = tickRateL * f_factor;
+        if (dutyL < 0.5f) wheelVelL = -wheelVelL;
+
+        float wheelVelR = tickRateR * f_factor;
+        if (dutyR < 0.5f) wheelVelR = -wheelVelR;
+
+        // Reset counters for the next window
+        currentTicksL = 0;
+        currentTicksR = 0;
+
+        // --- STEP 3: Robot Velocities ---
+        float robotTransVel = (wheelVelR + wheelVelL) / 2.0f;
+        float robotAngVel   = (wheelVelR - wheelVelL) / DIST_BETWEEN_WHEELS;
+
+        // --- STEP 4: Display ---
+        lcd.cls();
+        lcd.locate(0,0);
+        lcd.printf("V: %.3f m/s", robotTransVel);
+        lcd.locate(0,10);
+        lcd.printf("W: %.3f rad/s", robotAngVel);
+        lcd.locate(0,20);
+        lcd.printf("L:%.2f R:%.2f", wheelVelL, wheelVelR);
+        
+        wait(SAMPLE_TIME); 
     }
 }
