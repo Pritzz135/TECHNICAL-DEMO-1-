@@ -1,0 +1,103 @@
+# 🤖 Robotics & Embedded Systems API
+**Version:** 1.0.0  
+**Platform:** Mbed OS (L432KC / Application Shield)  
+**Description:** A complete API for differential drive robotics, covering Motor Control, Sensor Fusion, and Bluetooth Telemetry.
+
+---
+
+## 1. Physical Interface (Hardware Mapping)
+To use this API, the hardware must be wired to the following Microcontroller pins:
+
+| Module | Component | Pin | Function |
+| :--- | :--- | :--- | :--- |
+| **Locomotion** | PWM Left / Right | `PC_8` / `PC_6` | Speed Control (20kHz) |
+| | DIR Left / Right | `PB_14` / `PB_12` | Phase/Direction |
+| | BIP Left / Right | `PB_13` / `PB_15` | Bipolar Mode Enable |
+| **Sensors** | Encoders (L/R) | `PA_10` / `PB_9` | Tick Counting (Interrupts) |
+| | Potentiometers | `PA_0` / `PA_1` | Manual Speed Input |
+| | Line Sensors | `PC_2`–`PC_4` | 5-Channel Analog Array |
+| **Comms** | Bluetooth (HM-10)| `PA_11` / `PA_12` | UART (9600 Baud) |
+
+---
+
+## 2. Class Documentation
+
+### `class LED`
+A wrapper for Active-Low LEDs found on the Application Shield.
+* **Constructor:** `LED(PinName pin)` - Initializes the LED in the OFF state.
+* **`void on()`**: Drives pin LOW (0) to turn LED ON.
+* **`void off()`**: Drives pin HIGH (1) to turn LED OFF.
+
+### `class Potentiometer`
+Handles analog-to-digital conversion for user inputs.
+* **`void sample()`**: Captures the current analog voltage.
+* **`float getCurrentSampleNorm()`**: Returns a value between `0.0` and `1.0`.
+* **`float getCurrentSampleVolts()`**: Returns the actual voltage (0V to 3.3V).
+
+### `class SamplingPotentiometer` (Inherits `Potentiometer`)
+An automated version of the Potentiometer class.
+* **Constructor:** `SamplingPotentiometer(PinName p, float v, float fs)`
+* **Feature:** Uses a `Ticker` to automatically sample the hardware at frequency `fs` (Hz). No manual calling of `.sample()` is required.
+
+---
+
+## 3. Kinematics & Logic API
+
+### Physical Constants
+The following constants are used for real-world distance calculations:
+* **Wheel Diameter:** 0.080m
+* **Gear Ratio:** 50.0:1
+* **Encoder CPR:** 64.0
+* **Axle Track Width:** 0.15m
+
+### Core Functions
+#### `float calculate_f_factor()`
+Calculates the "Meters Per Tick" constant based on the physical robot parameters.
+* **Returns:** `float` distance value.
+
+#### Bipolar Drive Logic
+The motors operate in **Bipolar PWM Mode**:
+* **Duty Cycle 0.5 (50%):** Neutral / Stop.
+* **Duty Cycle 1.0 (100%):** Full Forward.
+* **Duty Cycle 0.0 (0%):** Full Reverse.
+
+---
+
+## 4. Communication Protocols
+
+### Bluetooth Command Set (HM-10)
+The system listens for specific ASCII characters via Serial:
+* **`'1'`**: Remote Trigger - Red LED ON.
+* **`'0'`**: Remote Trigger - Red LED OFF.
+
+### Data Logging Format
+Line sensor data is broadcasted in the following CSV-style format for easy parsing:
+`[Reading #] | S1 | S2 | S3 | S4 | S5`
+
+---
+
+## 5. Implementation Example
+This example shows how to use the classes to drive a motor and calculate velocity simultaneously.
+
+```cpp
+#include "mbed.h"
+// API Setup
+SamplingPotentiometer speedPot(PA_0, 3.3f, 100); // 100Hz Auto-sampling
+float f = calculate_f_factor();
+
+int main() {
+    while(1) {
+        // 1. Get user input from Potentiometer
+        float driveValue = speedPot.getCurrentSampleNorm();
+        
+        // 2. Control Motor (Bipolar Mode)
+        PWM1.write(driveValue);
+        
+        // 3. Calculate Velocity (m/s)
+        float velocity = (currentTicksL / 0.1f) * f;
+        
+        // 4. Output Telemetry
+        lcd.printf("V: %.2f m/s", velocity);
+        wait(0.1);
+    }
+}
