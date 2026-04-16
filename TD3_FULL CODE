@@ -1,0 +1,221 @@
+/*  ============================================================
+ *  TD3 – LINE FOLLOWING
+ *  
+ *  - Weighted analog steering (non-linear for curves)
+ *  - Encoder speed control (incline + downhill)
+ *  - INSTANT STOP when no sensor sees white
+ *  - ONE 180° turn when fully lost, then continue
+ *  ============================================================ */
+#include "mbed.h"
+
+// =============================================================
+//  TUNING
+// =============================================================
+const float BASE_DUTY         = 0.68f;
+const float L_OFFSET          = -0.07f;
+const float WHITE_THRESHOLD   = 0.92f;
+const float CORRECT_AMOUNT    = 0.035f;
+
+// Speed control
+const float TARGET_MAX_SPEED  = 25.0f;
+const float KP_SPEED          = 0.005f;
+const float KI_SPEED          = 0.002f;
+
+// How long of "no white" before triggering 180 turn
+const int   NO_WHITE_BEFORE_TURN = 20;   // 20 x 50ms = 1s
+
+// 180 turn parameters
+const float TURN_DUTY_FORWARD = 0.68f;
+const float TURN_DUTY_BACK    = 0.32f;
+const long  TURN_180_PULSES   = 275;     // TUNE THIS
+
+// =============================================================
+//  MOTORS
+// =============================================================
+DigitalOut BIP1(PB_13);
+DigitalOut DIR1(PB_14);
+PwmOut     PWM1(PC_8);
+
+DigitalOut BIP2(PB_15);
+DigitalOut DIR2(PB_12);
+PwmOut     PWM2(PC_6);
+
+DigitalOut ENA(PB_2);
+
+// =============================================================
+//  SENSORS
+// =============================================================
+AnalogIn s1(PC_4);
+AnalogIn s2(PB_1);
+AnalogIn s3(PC_5);
+AnalogIn s4(PC_2);
+AnalogIn s5(PC_3);
+
+// =============================================================
+//  ENCODERS
+// =============================================================
+InterruptIn encLA(PA_10);
+InterruptIn encRA(PB_9);
+
+volatile long pulsesL = 0;
+volatile long pulsesR = 0;
+
+void countL() { pulsesL++; }
+void countR() { pulsesR++; }
+
+// =============================================================
+//  HELPERS
+// =============================================================
+inline float clamp(float v, float lo, float hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+void stopMotors() {
+    PWM1.write(0.5f);
+    PWM2.write(0.5f);
+}
+
+void resetPulses() {
+    __disable_irq();
+    pulsesL = 0;
+    pulsesR = 0;
+    __enable_irq();
+}
+
+// =============================================================
+//  180° TURN (uses encoder pulses to know when done)
+// =============================================================
+void turn180()
+{
+    resetPulses();
+
+    while (true) {
+        long avgTurn = (pulsesL + pulsesR) / 2;
+        if (avgTurn >= TURN_180_PULSES) break;
+
+        PWM1.write(TURN_DUTY_FORWARD);   // Left forward
+        PWM2.write(TURN_DUTY_BACK);      // Right backward
+
+        wait(0.02f);
+    }
+
+    stopMotors();
+    wait(0.3f);
+}
+
+// =============================================================
+//  MAIN
+// =============================================================
+int main()
+{
+    encLA.rise(&countL);
+    encRA.rise(&countR);
+
+    PWM1.period_us(50);
+    PWM2.period_us(50);
+    stopMotors();
+
+    BIP1 = 1;  BIP2 = 1;
+    DIR1 = 1;  DIR2 = 1;
+
+    ENA = 0;
+    wait(0.5f);
+    ENA = 1;
+
+    wait(3.0f);
+
+    // State
+    int   noWhiteCount = 0;
+    int   loopCounter  = 0;
+    float speedBoost   = 0.0f;
+    float integral     = 0.0f;
+    bool  turnDone     = false;   // Only allow ONE 180 turn
+
+    while (true)
+    {
+        // ---- Read sensors ----
+        float r1 = s1.read();
+        float r2 = s2.read();
+        float r3 = s3.read();
+        float r4 = s4.read();
+        float r5 = s5.read();
+
+        float w1 = (r1 < WHITE_THRESHOLD) ? (1.0f - r1) : 0.0f;
+        float w2 = (r2 < WHITE_THRESHOLD) ? (1.0f - r2) : 0.0f;
+        float w3 = (r3 < WHITE_THRESHOLD) ? (1.0f - r3) : 0.0f;
+        float w4 = (r4 < WHITE_THRESHOLD) ? (1.0f - r4) : 0.0f;
+        float w5 = (r5 < WHITE_THRESHOLD) ? (1.0f - r5) : 0.0f;
+
+        float total = w1 + w2 + w3 + w4 + w5;
+
+        if (total > 0.01f)
+        {
+            // --- LINE DETECTED ---
+            noWhiteCount = 0;
+
+            float position = ((-2.0f*w1) + (-1.0f*w2) + (0.0f*w3) + (1.0f*w4) + (2.0f*w5)) / total;
+
+            // Non-linear steering
+            float steerValue = position * fabs(position);
+            float steer = steerValue * CORRECT_AMOUNT;
+
+            float dutyL = (BASE_DUTY + L_OFFSET) + steer + speedBoost;
+            float dutyR = BASE_DUTY - steer + speedBoost;
+
+            dutyL = clamp(dutyL, 0.55f, 0.90f);
+            dutyR = clamp(dutyR, 0.55f, 0.90f);
+
+            PWM1.write(dutyL);
+            PWM2.write(dutyR);
+        }
+        else
+        {
+            // --- NO WHITE DETECTED: STOP IMMEDIATELY ---
+            stopMotors();
+            noWhiteCount++;
+
+            // After 1s of no white, do the ONE 180 turn (if not done yet)
+            if (noWhiteCount >= NO_WHITE_BEFORE_TURN && !turnDone)
+            {
+                turnDone = true;
+
+                // Reset state
+                speedBoost = 0.0f;
+                integral = 0.0f;
+
+                // Do the turnaround
+                turn180();
+
+                // Reset counter — we're now searching for the line again
+                noWhiteCount = 0;
+                wait(0.3f);
+            }
+        }
+
+        // ---- Speed control every 100ms ----
+        loopCounter++;
+        if (loopCounter >= 2) {
+            __disable_irq();
+            long pL = pulsesL;
+            long pR = pulsesR;
+            pulsesL = 0;
+            pulsesR = 0;
+            __enable_irq();
+
+            float avgPulses = ((float)pL + (float)pR) / 2.0f;
+            float error = TARGET_MAX_SPEED - avgPulses;
+
+            integral += error;
+            integral = clamp(integral, -50.0f, 50.0f);
+
+            speedBoost = (KP_SPEED * error) + (KI_SPEED * integral);
+            speedBoost = clamp(speedBoost, -0.15f, 0.20f);
+
+            loopCounter = 0;
+        }
+
+        wait(0.015f);
+    }
+}
